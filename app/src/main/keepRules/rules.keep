@@ -1,0 +1,9 @@
+# Project specific R8 rules.
+# AGP combines all keep rule files in src/main/keepRules and passes them to R8.
+
+# Instantiated by Shizuku via reflection inside the shell-uid process.
+-keep class com.app.pixelheat.privilege.ShellUserService {
+    <init>(...);
+}
+-keep class com.app.pixelheat.privilege.IShellService { *; }
+-keep class com.app.pixelheat.privilege.IShellService$* { *; }

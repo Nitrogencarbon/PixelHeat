@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Pixel Heat</string>
+    <string name="fgs_special_use_reason">Continuous diagnostic thermal monitoring of the device with low-power adaptive sampling</string>
+    <string name="channel_monitor_name">Thermal monitoring</string>
+    <string name="channel_monitor_desc">Persistent notification of the monitoring service</string>
+    <string name="channel_alerts_name">Overheating alerts</string>
+    <string name="channel_alerts_desc">Alerts explaining the diagnosed cause of overheating</string>
+</resources>

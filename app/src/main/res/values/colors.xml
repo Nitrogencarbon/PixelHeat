@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same system tokens Compose reads for the dynamic light scheme background on API 34+. -->
+    <color name="window_background">@android:color/system_background_light</color>
+</resources>
