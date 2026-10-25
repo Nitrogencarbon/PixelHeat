@@ -10,13 +10,17 @@ import java.net.URL
 import java.util.Locale
 import kotlin.math.abs
 
-/** Outdoor weather from Open-Meteo (free, no API key). Coordinates are rounded to ~1 km. */
+/**
+ * Outdoor weather from Open-Meteo (free, no API key). Coordinates are rounded to ~1 km.
+ * Nothing is sent, and nothing cached is used, unless the user granted [AppPreferences.weatherConsent].
+ */
 class WeatherClient(private val prefs: AppPreferences) {
 
     @Volatile
     private var lastAttemptAt = 0L
 
     fun cached(maxAgeMs: Long = CACHE_MAX_AGE_MS): WeatherSnapshot? {
+        if (!prefs.weatherConsent.value) return null
         val t = prefs.weatherTemp
         if (t.isNaN() || System.currentTimeMillis() - prefs.weatherAt > maxAgeMs) return null
         return WeatherSnapshot(
@@ -29,6 +33,7 @@ class WeatherClient(private val prefs: AppPreferences) {
     }
 
     suspend fun current(lat: Double, lon: Double): WeatherSnapshot? {
+        if (!prefs.weatherConsent.value) return null
         val now = System.currentTimeMillis()
         val sameArea = abs(prefs.weatherLat - lat) < 0.1 && abs(prefs.weatherLon - lon) < 0.1
         if (sameArea && now - prefs.weatherAt < REFRESH_MS) return cached()

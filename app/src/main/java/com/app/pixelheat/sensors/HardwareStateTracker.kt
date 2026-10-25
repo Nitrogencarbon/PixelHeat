@@ -20,6 +20,7 @@ import com.app.pixelheat.model.HardwareEventType
 import com.app.pixelheat.model.NetworkType
 import com.app.pixelheat.model.ThermalSnapshot
 import com.app.pixelheat.model.ThermalStatus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
@@ -191,7 +192,13 @@ class HardwareStateTracker(
             } else {
                 null
             }
-            repository.recordEvent(type, active, value, now, owner, owner?.let(labelOf))
+            // This scope has no exception handler: a failed write would take the whole process down.
+            try {
+                repository.recordEvent(type, active, value, now, owner, owner?.let(labelOf))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
         }
         _triggers.tryEmit(type)
     }

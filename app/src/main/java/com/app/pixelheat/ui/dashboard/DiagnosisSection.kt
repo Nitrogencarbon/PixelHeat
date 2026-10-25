@@ -1,5 +1,10 @@
 package com.app.pixelheat.ui.dashboard
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,11 +21,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.TrendingUp
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.Whatshot
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
@@ -31,6 +42,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -95,23 +110,67 @@ private fun StatusBadge(status: DiagnosisStatus) {
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun DiagnosisSection(report: DiagnosisReport?) {
+fun DiagnosisSection(
+    report: DiagnosisReport?,
+    window: ContributionWindow,
+    onWindow: (ContributionWindow) -> Unit,
+    installedAt: Long,
+) {
     SectionCard(
         title = "Cause & effect",
         icon = Icons.Rounded.Insights,
         trailing = { report?.let { StatusBadge(it.status) } },
     ) {
-        if (report == null) {
-            SectionLoading("Analyzing…")
-            return@SectionCard
+        val motion = MaterialTheme.motionScheme
+        // Branch key (loading vs report): report refreshes update in place, only the swap cross-fades.
+        AnimatedContent(
+            targetState = report,
+            transitionSpec = {
+                (fadeIn(motion.defaultEffectsSpec()) togetherWith fadeOut(motion.fastEffectsSpec()))
+                    .using(SizeTransform(clip = false) { _, _ -> motion.defaultSpatialSpec() })
+            },
+            contentKey = { it != null },
+            label = "diagnosis",
+        ) { current ->
+            if (current == null) SectionLoading("Analyzing…") else DiagnosisBody(current, window, onWindow, installedAt)
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun DiagnosisBody(
+    report: DiagnosisReport,
+    window: ContributionWindow,
+    onWindow: (ContributionWindow) -> Unit,
+    installedAt: Long,
+) {
+    Column {
         Text(report.headline, style = MaterialTheme.typography.headlineSmallEmphasized, color = report.status.color())
         Spacer(Modifier.height(8.dp))
         Text(report.explanation, style = MaterialTheme.typography.bodyMedium)
 
+        Spacer(Modifier.height(20.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Estimated heat contribution",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
+            ContributionWindowMenu(window, onWindow)
+        }
+        val requestedMin = (System.currentTimeMillis() - window.startAt(System.currentTimeMillis(), installedAt)) / 60_000f
+        if (report.causes.isNotEmpty() && report.windowMin < requestedMin * 0.9f) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Based on the last ${formatDuration((report.windowMin * 60_000f).toLong())} of samples.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         if (report.causes.isNotEmpty()) {
-            Spacer(Modifier.height(20.dp))
-            SubHeader("Estimated heat contribution · last ${report.windowMin.roundToInt()} min")
+            Spacer(Modifier.height(8.dp))
             val shown = report.causes.take(6)
             Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                 shown.forEachIndexed { i, cause ->
@@ -119,7 +178,7 @@ fun DiagnosisSection(report: DiagnosisReport?) {
                         cause = cause,
                         primary = i == 0,
                         barColor = if (i == 0) report.status.color() else MaterialTheme.colorScheme.secondary,
-                        shape = segmentShape(i, shown.size),
+                        shape = ListItemDefaults.segmentedShapes(index = i, count = shown.size).shape,
                     )
                 }
             }
@@ -203,14 +262,6 @@ private fun CauseItem(cause: CauseContribution, primary: Boolean, barColor: Colo
     }
 }
 
-/** Rounded outer corners on the first and last item of a stacked group, tight corners between items. */
-private fun segmentShape(index: Int, count: Int) = RoundedCornerShape(
-    topStart = if (index == 0) 20.dp else 6.dp,
-    topEnd = if (index == 0) 20.dp else 6.dp,
-    bottomStart = if (index == count - 1) 20.dp else 6.dp,
-    bottomEnd = if (index == count - 1) 20.dp else 6.dp,
-)
-
 /** Apps as a sub-scale of their cause: bars split the cause's share, indented under a guide line. */
 @Composable
 private fun AppBreakdown(apps: List<AppShare>) {
@@ -259,6 +310,37 @@ private fun episodeDetails(e: HeatEpisode): List<String> = buildList {
     if (e.suspects.isNotEmpty()) add("Active during the peak: " + e.suspects.joinToString(" · ") { it.peakText() })
     addAll(e.hardwareUsers)
     e.peakZone?.let { add("Hottest zone: $it") }
+}
+
+@Composable
+internal fun ContributionWindowMenu(
+    selected: ContributionWindow,
+    onSelect: (ContributionWindow) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        FilledTonalButton(onClick = { expanded = true }) {
+            Text(selected.label)
+            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+            Icon(Icons.Rounded.ArrowDropDown, contentDescription = "Choose the duration")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ContributionWindow.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.label) },
+                    onClick = {
+                        onSelect(option)
+                        expanded = false
+                    },
+                    leadingIcon = if (option == selected) {
+                        { Icon(Icons.Rounded.Check, contentDescription = null) }
+                    } else {
+                        null
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable

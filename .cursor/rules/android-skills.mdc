@@ -1,0 +1,27 @@
+---
+description: Android skills for Compose performance and state, navigation, edge-to-edge, R8, ANR, memory and background work
+globs: ["**/*.kt", "**/*.kts", "**/proguard-rules.pro"]
+alwaysApply: false
+---
+
+PixelHeat is a native Android app (Kotlin, Jetpack Compose, Material 3 Expressive, Navigation 3, Room, WorkManager,
+a foreground monitoring service, Shizuku/root shell access, minSdk 34).
+Before working on one of these topics, read the matching SKILL.md in `.agent-skills/` and follow it:
+
+- Material 3 Expressive look, tokens, shapes, motion springs: `m3-expressive`
+- Compose animations (springs, transitions, shared elements): `compose-animations`
+- Composable API design, slots, modifiers, previews: `compose-component-design`
+- State hoisting, effects, collectAsStateWithLifecycle, ViewModel state: `compose-state-and-effects`
+- Recomposition, stability, jank in charts/lists, deferred state reads: `compose-performance`, `jetpack-compose-performance`
+- Navigation 3 back stack, entries, ViewModel scoping: `navigation-3`
+- System bars, insets, edge-to-edge: `edge-to-edge`
+- APK size, R8, keep rules: `r8-analyzer`
+- ANR, main-thread work, jank: `anr-audit-and-fix`, `android-performance-anr-and-jank-prevention`
+- Memory leaks: `android-performance-memory-leak-prevention`
+- Foreground service, WorkManager, process death, background limits: `state-and-background-footguns`
+- Runtime permissions, exported components, boot receiver, intents, AIDL/Binder exposure: `android-permissions-security`, `android-intent-security`
+- Profiling with Perfetto and the Android profiler: `android-profiler`
+
+Ignore advice in these skills about XML Views or Media3 playback unless the task needs it.
+No skill covers Room, Shizuku or root shells: follow the existing code in data/db and privilege, and check official docs for API details.
+Keep the app lightweight and battery-friendly: it samples thermal data in the background.

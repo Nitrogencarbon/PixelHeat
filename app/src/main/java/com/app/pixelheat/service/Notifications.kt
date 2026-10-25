@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import com.app.pixelheat.MainActivity
 import com.app.pixelheat.R
 import com.app.pixelheat.model.PhoneTempSource
@@ -23,6 +24,7 @@ object Notifications {
     const val CHANNEL_ALERTS = "alerts"
     const val ID_MONITOR = 1001
     const val ID_ALERT = 1002
+    const val ID_RESUME = 1003
 
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -97,7 +99,46 @@ object Notifications {
             .setContentIntent(openApp(context))
             .build()
 
+    /**
+     * Android refuses to start a foreground service from the background (outside the boot / app-open
+     * exemptions). Ask the user to open the app, which is an allowed starting point.
+     */
+    fun showResumeNeeded(context: Context) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        // The watchdog retries every 30 minutes: tell the user once per outage, not on every retry.
+        val state = noticeState(context)
+        if (state.getBoolean(KEY_RESUME_SHOWN, false)) return
+        state.edit { putBoolean(KEY_RESUME_SHOWN, true) }
+        val notification = NotificationCompat.Builder(context, CHANNEL_ALERTS)
+            .setSmallIcon(R.drawable.ic_stat_heat)
+            .setContentTitle("Monitoring paused")
+            .setContentText("Android stopped Pixel Heat in the background. Open the app to resume.")
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true)
+            .setContentIntent(openApp(context))
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(ID_RESUME, notification) }
+    }
+
+    fun clearResumeNeeded(context: Context) {
+        noticeState(context).edit { remove(KEY_RESUME_SHOWN) }
+        runCatching { NotificationManagerCompat.from(context).cancel(ID_RESUME) }
+    }
+
+    private fun noticeState(context: Context) =
+        context.applicationContext.getSharedPreferences("notifications", Context.MODE_PRIVATE)
+
+    private const val KEY_RESUME_SHOWN = "resume_needed_shown"
+
     private var lastScoreKey: String? = null
+
+    /** The placeholder replaced the posted score, so the next score must be posted even if unchanged. */
+    fun forgetScore() {
+        synchronized(this) { lastScoreKey = null }
+    }
 
     private fun openApp(context: Context): PendingIntent = PendingIntent.getActivity(
         context,

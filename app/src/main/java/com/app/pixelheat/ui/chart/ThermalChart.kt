@@ -1,13 +1,12 @@
 package com.app.pixelheat.ui.chart
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.repeatable
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
@@ -16,8 +15,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -51,6 +52,9 @@ import kotlin.math.ceil
 
 private const val SELECTION_TIMEOUT_MS = 4_000L
 private const val RECENT_LABEL_MS = 10 * 60_000L
+
+/** Odd, so the reverse-repeating pulse ends fully opaque. */
+private const val PULSE_ITERATIONS = 7
 
 private sealed interface ChartSelection {
     data class Time(val t: Long) : ChartSelection
@@ -128,28 +132,28 @@ fun ThermalChart(data: ChartData, modifier: Modifier = Modifier) {
         if (size.width == 0 || size.height == 0) null else ChartGeometry(size, density, data)
     }
     val placed = remember(geometry) { geometry?.layoutMarkers().orEmpty() }
-    val hasRecent = data.markers.any { data.end - it.t < RECENT_LABEL_MS }
-    val pulse = if (hasRecent) {
-        val transition = rememberInfiniteTransition(label = "markers")
-        transition.animateFloat(
-            initialValue = 0.35f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-            label = "pulse",
-        ).value
-    } else {
-        1f
+    val latestRecent = data.markers.filter { data.end - it.t < RECENT_LABEL_MS }.maxOfOrNull { it.t }
+    // A few pulses per new event, not a loop: the chart stays composed on the neighbouring pages too.
+    // The value is read inside the draw block below, so it only redraws: it never recomposes the chart.
+    val pulse = remember { Animatable(1f) }
+    LaunchedEffect(latestRecent) {
+        if (latestRecent == null) return@LaunchedEffect
+        pulse.snapTo(0.35f)
+        pulse.animateTo(1f, repeatable(PULSE_ITERATIONS, tween(900), RepeatMode.Reverse))
     }
+    val currentGeometry by rememberUpdatedState(geometry)
+    val currentPlaced by rememberUpdatedState(placed)
 
-    Canvas(
+    Spacer(
         modifier = modifier
             .fillMaxWidth()
             .height(280.dp)
             .onSizeChanged { size = it }
-            .pointerInput(geometry, placed) {
+            // Keyed on Unit: new samples rebuild the geometry, and restarting here would cancel a drag.
+            .pointerInput(Unit) {
                 detectTapGestures { offset ->
-                    val g = geometry ?: return@detectTapGestures
-                    val hit = placed.minByOrNull { abs(it.x - offset.x) + abs(it.y - offset.y) }
+                    val g = currentGeometry ?: return@detectTapGestures
+                    val hit = currentPlaced.minByOrNull { abs(it.x - offset.x) + abs(it.y - offset.y) }
                         ?.takeIf { abs(it.x - offset.x) < g.badgeR * 1.8f && abs(it.y - offset.y) < g.badgeR * 1.8f }
                     selection = when {
                         hit != null -> ChartSelection.Marker(hit)
@@ -158,29 +162,34 @@ fun ThermalChart(data: ChartData, modifier: Modifier = Modifier) {
                     }
                 }
             }
-            .pointerInput(geometry) {
+            .pointerInput(Unit) {
                 detectHorizontalDragGestures { change, _ ->
-                    val g = geometry ?: return@detectHorizontalDragGestures
+                    val g = currentGeometry ?: return@detectHorizontalDragGestures
                     selection = ChartSelection.Time(g.timeAt(change.position.x))
                 }
+            }
+            .drawWithCache {
+                // Series paths only depend on the geometry: build them once, not on every pulse frame.
+                val seriesPaths = geometry?.let(::buildSeriesPaths).orEmpty()
+                onDrawBehind {
+                    val g = geometry ?: return@onDrawBehind
+                    drawHotZone(g)
+                    drawGrid(g, measurer, labelStyle, colors)
+                    drawBars(g)
+                    drawSeries(seriesPaths)
+                    drawMarkers(g, placed, measurer, glyphStyle, tooltipStyle, colors, pulse.value)
+                    when (val sel = selection) {
+                        is ChartSelection.Time -> drawTimeSelection(g, sel.t, measurer, tooltipStyle, colors)
+                        is ChartSelection.Marker -> drawBubble(g, sel.placed.x, sel.placed.y + g.badgeR + 4f, sel.placed.marker.label, measurer, tooltipStyle, colors)
+                        null -> Unit
+                    }
+                    if (data.isEmpty) {
+                        val layout = measurer.measure("Collecting data.", labelStyle.copy(fontSize = 13.sp))
+                        drawText(layout, topLeft = Offset((g.width - layout.size.width) / 2, (g.top + g.bottom - layout.size.height) / 2))
+                    }
+                }
             },
-    ) {
-        val g = geometry ?: return@Canvas
-        drawHotZone(g)
-        drawGrid(g, measurer, labelStyle, colors)
-        drawBars(g)
-        drawSeries(g)
-        drawMarkers(g, placed, measurer, glyphStyle, tooltipStyle, colors, pulse)
-        when (val sel = selection) {
-            is ChartSelection.Time -> drawTimeSelection(g, sel.t, measurer, tooltipStyle, colors)
-            is ChartSelection.Marker -> drawBubble(g, sel.placed.x, sel.placed.y + g.badgeR + 4f, sel.placed.marker.label, measurer, tooltipStyle, colors)
-            null -> Unit
-        }
-        if (data.isEmpty) {
-            val layout = measurer.measure("Collecting data…", labelStyle.copy(fontSize = 13.sp))
-            drawText(layout, topLeft = Offset((g.width - layout.size.width) / 2, (g.top + g.bottom - layout.size.height) / 2))
-        }
-    }
+    )
 }
 
 /** Skin and battery hit Android's Severe status around here: too hot to hold or use normally. */
@@ -238,17 +247,23 @@ private fun DrawScope.drawBars(g: ChartGeometry) {
     }
 }
 
-private fun DrawScope.drawSeries(g: ChartGeometry) {
-    g.data.series.forEach { s ->
-        val path = Path()
-        for (i in s.points.indices) {
-            val p = s.points[i]
-            val x = g.x(p.t)
-            val y = g.y(p.v)
-            if (i == 0 || p.t - s.points[i - 1].t > g.data.gapMs) path.moveTo(x, y) else path.lineTo(x, y)
-        }
-        drawPath(path, s.key.color, style = Stroke(width = 2.2f * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        s.points.lastOrNull()?.let { drawCircle(s.key.color, radius = 3.5f * density, center = Offset(g.x(it.t), g.y(it.v))) }
+private class SeriesPath(val path: Path, val color: Color, val last: Offset?)
+
+private fun buildSeriesPaths(g: ChartGeometry): List<SeriesPath> = g.data.series.map { s ->
+    val path = Path()
+    for (i in s.points.indices) {
+        val p = s.points[i]
+        val x = g.x(p.t)
+        val y = g.y(p.v)
+        if (i == 0 || p.t - s.points[i - 1].t > g.data.gapMs) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    SeriesPath(path, s.key.color, s.points.lastOrNull()?.let { Offset(g.x(it.t), g.y(it.v)) })
+}
+
+private fun DrawScope.drawSeries(paths: List<SeriesPath>) {
+    paths.forEach { sp ->
+        drawPath(sp.path, sp.color, style = Stroke(width = 2.2f * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        sp.last?.let { drawCircle(sp.color, radius = 3.5f * density, center = it) }
     }
 }
 

@@ -3,9 +3,9 @@ package com.app.pixelheat.ui.dashboard
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -235,46 +236,64 @@ fun buildTiles(s: ThermalSnapshot, monitor: MonitorStatus?): List<TileModel> {
 
 @Composable
 fun MetricTile(tile: TileModel, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val titleStyle = MaterialTheme.typography.labelLarge
+    val valueStyle = MaterialTheme.typography.headlineSmall
+    val subtitleStyle = MaterialTheme.typography.bodySmall
+    val titleBlock = with(LocalDensity.current) { titleStyle.lineHeight.toDp() * TITLE_LINES }
+    val headerHeight = if (titleBlock > ICON_SIZE) titleBlock else ICON_SIZE
+    val tileHeight = TILE_PADDING * 2 + headerHeight + TITLE_GAP +
+        with(LocalDensity.current) { valueStyle.lineHeight.toDp() + subtitleStyle.lineHeight.toDp() * SUBTITLE_LINES } +
+        BAR_GAP + BAR_HEIGHT
+
     Card(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 136.dp),
+            .height(tileHeight),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ShapeIcon(tile.icon, tile.accent, size = 36.dp)
+        Column(Modifier.padding(TILE_PADDING).fillMaxHeight()) {
+            Row(Modifier.height(headerHeight), verticalAlignment = Alignment.CenterVertically) {
+                ShapeIcon(tile.icon, tile.accent, size = ICON_SIZE)
                 Spacer(Modifier.width(10.dp))
                 Text(
                     tile.title,
-                    style = MaterialTheme.typography.labelLarge,
+                    style = titleStyle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = TITLE_LINES,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(TITLE_GAP))
             Text(
                 tile.value,
-                style = MaterialTheme.typography.headlineSmall,
+                style = valueStyle,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            tile.subtitle?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            tile.progress?.let {
-                Spacer(Modifier.height(10.dp))
-                HeatProgress(it, tile.accent)
+            Text(
+                tile.subtitle.orEmpty(),
+                style = subtitleStyle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                minLines = SUBTITLE_LINES,
+                maxLines = SUBTITLE_LINES,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.weight(1f))
+            if (tile.progress != null) {
+                HeatProgress(tile.progress, tile.accent, Modifier.height(BAR_HEIGHT))
+            } else {
+                Spacer(Modifier.height(BAR_HEIGHT))
             }
         }
     }
 }
+
+private const val TITLE_LINES = 2
+private const val SUBTITLE_LINES = 2
+private val ICON_SIZE = 36.dp
+private val TILE_PADDING = 16.dp
+private val TITLE_GAP = 10.dp
+private val BAR_GAP = 10.dp
+private val BAR_HEIGHT = 4.dp

@@ -49,6 +49,10 @@ class ThermalMonitorService : Service() {
     private lateinit var container: AppContainer
     private var loopJob: Job? = null
 
+    /** Whether the running foreground service holds the location type; passive location needs it. */
+    @Volatile
+    private var locationAllowed = false
+
     override fun onCreate() {
         super.onCreate()
         container = (application as PixelHeatApp).container
@@ -59,9 +63,22 @@ class ThermalMonitorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val fromForeground = intent?.getBooleanExtra(EXTRA_FROM_FOREGROUND, false) == true
         if (!promote(fromForeground)) {
+            // startForegroundService() obliges the service to call startForeground() before it stops,
+            // otherwise Android raises ForegroundServiceDidNotStartInTimeException.
+            runCatching {
+                ServiceCompat.startForeground(
+                    this,
+                    Notifications.ID_MONITOR,
+                    Notifications.monitor(this, "Pixel Heat", "Monitoring could not start."),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                )
+            }
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            Notifications.showResumeNeeded(this)
             stopSelf()
             return START_NOT_STICKY
         }
+        Notifications.clearResumeNeeded(this)
         if (loopJob == null) {
             loopJob = scope.launch { runLoop() }
             scope.launch { container.tracker.triggers.collect { wakeups.trySend(Unit) } }
@@ -82,15 +99,21 @@ class ThermalMonitorService : Service() {
 
     private fun promote(fromForeground: Boolean): Boolean {
         val notification = Notifications.monitor(this, "Pixel Heat", "Starting thermal monitoring…")
+        Notifications.forgetScore()
         val locationGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
         val special = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         val withLocation = special or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        // A restart by Android or the watchdog has no foreground origin, so it cannot hold the location type.
+        // Keep the location type from an earlier start in that case instead of dropping it.
+        val wantLocation = locationGranted && (fromForeground || locationAllowed)
         return try {
-            val types = if (fromForeground && locationGranted) withLocation else special
+            val types = if (wantLocation) withLocation else special
             ServiceCompat.startForeground(this, Notifications.ID_MONITOR, notification, types)
+            locationAllowed = wantLocation
             true
         } catch (_: SecurityException) {
+            locationAllowed = false
             runCatching { ServiceCompat.startForeground(this, Notifications.ID_MONITOR, notification, special) }.isSuccess
         } catch (_: IllegalStateException) {
             false
@@ -112,18 +135,20 @@ class ThermalMonitorService : Service() {
             var interval = level.intervalMs
             if (snapshot != null) {
                 lastSampleAt = snapshot.timestamp
-                container.repository.record(snapshot, level)
-                try {
+                // A failed write (disk full, locked database) skips this sample instead of killing the monitor.
+                swallow { container.repository.record(snapshot, level) }
+                swallow {
                     container.repository.recordAppUsage(
                         snapshot.timestamp,
                         container.appActivity.read(snapshot.timestamp, snapshot.gpsActive, snapshot.cameraActive),
                     )
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
                 }
                 val next = policy.evaluate(snapshot)
-                if (next.detail == DetailLevel.FULL) container.passiveLocation.start() else container.passiveLocation.stop()
+                if (next.detail == DetailLevel.FULL && locationAllowed) {
+                    container.passiveLocation.start()
+                } else {
+                    container.passiveLocation.stop()
+                }
                 interval = next.intervalMs
                 _status.value = MonitorStatus(
                     level = next,
@@ -140,12 +165,21 @@ class ThermalMonitorService : Service() {
                     snapshot.thermalStatus,
                     interval,
                 )
-                maybeAlert(snapshot)
+                swallow { maybeAlert(snapshot) }
             }
 
             withTimeoutOrNull(interval) { wakeups.receive() }
             val sinceLast = System.currentTimeMillis() - lastSampleAt
             if (sinceLast < MIN_TRIGGER_GAP_MS) delay(MIN_TRIGGER_GAP_MS - sinceLast)
+        }
+    }
+
+    private inline fun swallow(block: () -> Unit) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
         }
     }
 

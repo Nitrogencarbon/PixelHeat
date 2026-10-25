@@ -1,5 +1,60 @@
 package com.app.pixelheat.model
 
+/**
+ * Brief device census shown on the home summary.
+ *
+ * [rootModules] is null when `/data/adb` cannot be read, so a missing root shell is not shown as zero.
+ * [alwaysOnApps] counts user-installed apps set to unrestricted battery use.
+ */
+data class DeviceReport(
+    val installedApps: Int,
+    val rootModules: Int?,
+    val xposedModules: Int,
+    val alwaysOnApps: Int,
+) {
+    fun summaryLine(): String {
+        val modules = rootModules?.toString() ?: "—"
+        return "$installedApps apps · $modules root modules · $xposedModules Xposed · $alwaysOnApps always on"
+    }
+}
+
+/** Manifest keys used by classic Xposed, EdXposed, LSPosed and Vector modules. */
+internal val XPOSED_METADATA_KEYS = setOf("xposedmodule", "xposedminversion", "xposeddescription")
+
+/** APK entries used by legacy assets and libxposed API 100/101/102. */
+internal val XPOSED_ZIP_ENTRIES = listOf(
+    "assets/xposed_init",
+    "META-INF/xposed/java_init.list",
+    "META-INF/xposed/native_init.list",
+)
+
+internal fun isXposedModule(metadataKeys: Set<String>, zipEntryExists: (String) -> Boolean): Boolean {
+    if (metadataKeys.any { it in XPOSED_METADATA_KEYS }) return true
+    return XPOSED_ZIP_ENTRIES.any(zipEntryExists)
+}
+
+/**
+ * Parses the module listing. A missing `/data/adb` is zero modules. A permission failure is unknown.
+ * Module ids are unique, so the same folder mounted from Magisk and KernelSU counts once.
+ */
+internal fun rootModuleCount(output: String): Int? {
+    val lines = output.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    val adb = lines.firstOrNull { it.startsWith("ADB:") }?.removePrefix("ADB:")?.trim() ?: return null
+    if (adb != "/data/adb") {
+        val denied = adb.contains("denied", ignoreCase = true) || adb.contains("permission", ignoreCase = true)
+        return if (denied) null else 0
+    }
+    val sawBase = lines.any { it.startsWith("BASE:") }
+    val deniedBase = lines.any { it.startsWith("DENY:") }
+    if (deniedBase && !sawBase) return null
+    return lines.asSequence()
+        .filter { it.startsWith("MOD:") }
+        .map { it.removePrefix("MOD:") }
+        .filter { it.isNotEmpty() && '*' !in it && '/' !in it }
+        .toSet()
+        .size
+}
+
 data class DeviceIdentity(
     val manufacturer: String,
     val model: String,
@@ -51,6 +106,8 @@ data class LifetimeAverages(
     val throttledPct: Float,
     val screenOnPct: Float,
     val avgDischargeW: Float?,
+    /** Phone temperature while the screen is on or the phone is not resting. */
+    val avgInUseTemp: Float?,
 )
 
 data class MonitorStatus(

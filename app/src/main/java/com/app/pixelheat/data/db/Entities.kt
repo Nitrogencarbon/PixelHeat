@@ -15,6 +15,7 @@ import com.app.pixelheat.model.ThermalStatus
 import com.app.pixelheat.model.ZoneSource
 import com.app.pixelheat.model.phoneTempSource
 import com.app.pixelheat.model.phoneTemperature
+import kotlin.math.abs
 
 @Entity(tableName = "thermal_samples", indices = [Index("timestamp")])
 data class ThermalSampleEntity(
@@ -61,12 +62,43 @@ data class ThermalSampleEntity(
     val cellDbm: Int? = null,
     val cellKBps: Float? = null,
     val wifiKBps: Float? = null,
+    /**
+     * Share of [weightSec] the condition was on, from 0 to 1. Null on a raw sample, where the
+     * matching boolean covers the whole interval. Set when an hour of samples is folded into one row.
+     */
+    val screenOnDuty: Float? = null,
+    val chargingDuty: Float? = null,
+    val fastChargingDuty: Float? = null,
+    val gpsDuty: Float? = null,
+    val cameraDuty: Float? = null,
+    val audioDuty: Float? = null,
+    /** Average power while charging. Null on a raw sample, which uses [powerW]. */
+    val chargePowerW: Float? = null,
+    /** Average power while not charging. Null on a raw sample, which uses [powerW]. */
+    val dischargePowerW: Float? = null,
 )
 
 /** Phone score for this sample: skin when it was readable, otherwise battery. */
 val ThermalSampleEntity.referenceTemp: Float get() = phoneTemperature(skinTemp, batteryTemp)
 
 val ThermalSampleEntity.referenceSource: PhoneTempSource get() = phoneTempSource(skinTemp)
+
+/**
+ * Screen on, or the phone is not resting: charging, drawing at least [IN_USE_POWER_W],
+ * or using GPS, the camera, or audio. The power gate matches the idle check used for
+ * the outside-temperature estimate.
+ */
+internal const val IN_USE_POWER_W = 0.8f
+
+internal fun ThermalSampleEntity.isInUse(): Boolean =
+    screenOn || isCharging || abs(powerW) >= IN_USE_POWER_W || gpsActive || cameraActive || audioActive
+
+/**
+ * Fraction of the sample the condition was on. A raw sample is all or nothing; a folded hour
+ * carries the real share in [duty].
+ */
+internal fun ThermalSampleEntity.onFraction(duty: Float?, active: Boolean): Float =
+    (duty ?: if (active) 1f else 0f).coerceIn(0f, 1f)
 
 @Entity(tableName = "hardware_events", indices = [Index("timestamp")])
 data class HardwareEventEntity(
@@ -118,12 +150,18 @@ data class LifetimeStatsEntity(
     val screenOnSec: Double = 0.0,
     val dischargeEnergyWs: Double = 0.0,
     val dischargeSec: Double = 0.0,
+    /** Time-weighted sum of the phone temperature while [ThermalSampleEntity.isInUse]. */
+    @ColumnInfo(defaultValue = "0.0")
+    val inUseTempSum: Double = 0.0,
+    @ColumnInfo(defaultValue = "0.0")
+    val inUseSec: Double = 0.0,
 ) {
     fun accumulate(s: ThermalSampleEntity): LifetimeStatsEntity {
         val w = s.weightSec.toDouble()
         val ref = s.referenceTemp
         val newPeak = peakTemp == null || ref > peakTemp
         val discharging = !s.isCharging
+        val inUse = s.isInUse()
         return copy(
             lastSampleAt = s.timestamp,
             sampleCount = sampleCount + 1,
@@ -141,7 +179,27 @@ data class LifetimeStatsEntity(
             screenOnSec = screenOnSec + if (s.screenOn) w else 0.0,
             dischargeEnergyWs = dischargeEnergyWs + if (discharging && s.powerW < 0f) -s.powerW * w else 0.0,
             dischargeSec = dischargeSec + if (discharging) w else 0.0,
+            inUseTempSum = inUseTempSum + if (inUse) ref * w else 0.0,
+            inUseSec = inUseSec + if (inUse) w else 0.0,
         )
+    }
+
+    /**
+     * Older backups have no in-use totals. Folds them from the samples in the file.
+     * A backup that already stored the totals is left as-is, because pruned samples
+     * are no longer in the file.
+     */
+    fun backfillInUse(samples: List<ThermalSampleEntity>): LifetimeStatsEntity {
+        if (inUseSec != 0.0 || inUseTempSum != 0.0) return this
+        var sum = 0.0
+        var sec = 0.0
+        for (sample in samples) {
+            if (!sample.isInUse()) continue
+            val w = sample.weightSec.toDouble()
+            sec += w
+            sum += sample.referenceTemp * w
+        }
+        return if (sec == 0.0) this else copy(inUseTempSum = sum, inUseSec = sec)
     }
 
     companion object {

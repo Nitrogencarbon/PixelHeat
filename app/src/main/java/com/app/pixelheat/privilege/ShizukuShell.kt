@@ -35,6 +35,8 @@ class ShizukuShell(context: Context) : PrivilegedShell {
             if (binder != null && binder.pingBinder()) {
                 service = IShellService.Stub.asInterface(binder)
                 _connected.value = true
+            } else {
+                reset()
             }
         }
 
@@ -43,6 +45,7 @@ class ShizukuShell(context: Context) : PrivilegedShell {
         }
     }
 
+    /** Safe to call often: does nothing while a binding is already in place or pending. */
     @Synchronized
     fun bind() {
         if (bound) return
@@ -54,17 +57,20 @@ class ShizukuShell(context: Context) : PrivilegedShell {
         }
     }
 
+    /** Drops the binding so the next [bind] starts a fresh service process. */
     @Synchronized
     fun reset() {
+        val wasBound = bound
         bound = false
         service = null
         _connected.value = false
+        if (wasBound) runCatching { Shizuku.unbindUserService(args, connection, true) }
     }
 
     override suspend fun exec(command: String, timeoutMs: Long): String? = withContext(Dispatchers.IO) {
         val s = service ?: return@withContext null
         try {
-            s.exec(command)
+            s.execTimed(command, timeoutMs)
         } catch (_: Exception) {
             reset()
             null
@@ -72,6 +78,7 @@ class ShizukuShell(context: Context) : PrivilegedShell {
     }
 
     private companion object {
-        const val SERVICE_VERSION = 1
+        /** Bumped when [IShellService] changes, so Shizuku replaces a service process left from an older build. */
+        const val SERVICE_VERSION = 2
     }
 }

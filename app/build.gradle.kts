@@ -10,6 +10,9 @@ plugins {
 /** Release signing credentials; kept out of version control in keystore.properties at the project root. */
 val releaseKeystore = rootProject.file("keystore.properties").takeIf { it.exists() }?.let { file ->
     Properties().apply { file.inputStream().use { load(it) } }
+}?.takeIf { props ->
+    // A half-filled file must not break debug builds; release then stays unsigned.
+    listOf("storeFile", "storePassword", "keyAlias", "keyPassword").all { !props.getProperty(it).isNullOrBlank() }
 }
 
 android {
@@ -24,8 +27,8 @@ android {
         applicationId = "com.app.pixelheat"
         minSdk = 34
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.0.1"
+        versionCode = 2
+        versionName = "0.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -79,6 +82,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.core)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.navigation3.runtime)
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.androidx.navigationevent.compose)

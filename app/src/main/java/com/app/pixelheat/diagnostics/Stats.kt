@@ -54,7 +54,14 @@ object Stats {
     /** Linear interpolation of the reference temperature at [t]; null outside the sampled range. */
     fun referenceAt(samples: List<ThermalSampleEntity>, t: Long): Double? {
         if (samples.isEmpty() || t < samples.first().timestamp || t > samples.last().timestamp) return null
-        val idx = samples.indexOfFirst { it.timestamp >= t }
+        // Samples are sorted by time: the first one at or after t, found by binary search.
+        var lo = 0
+        var hi = samples.lastIndex
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (samples[mid].timestamp < t) lo = mid + 1 else hi = mid
+        }
+        val idx = lo
         val b = samples[idx]
         if (b.timestamp == t || idx == 0) return b.referenceTemp.toDouble()
         val a = samples[idx - 1]

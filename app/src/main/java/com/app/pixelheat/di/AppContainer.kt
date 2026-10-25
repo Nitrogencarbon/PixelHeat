@@ -2,6 +2,7 @@ package com.app.pixelheat.di
 
 import android.content.Context
 import com.app.pixelheat.data.ThermalRepository
+import com.app.pixelheat.data.archive.DataArchive
 import com.app.pixelheat.data.db.PixelHeatDatabase
 import com.app.pixelheat.data.prefs.AppPreferences
 import com.app.pixelheat.diagnostics.CauseEffectAnalyzer
@@ -13,6 +14,7 @@ import com.app.pixelheat.sensors.AppLabels
 import com.app.pixelheat.sensors.BatteryReader
 import com.app.pixelheat.sensors.CpuFreqReader
 import com.app.pixelheat.sensors.DeviceInfoProvider
+import com.app.pixelheat.sensors.DeviceReportReader
 import com.app.pixelheat.sensors.DeviceSpecsReader
 import com.app.pixelheat.sensors.EnvironmentSensors
 import com.app.pixelheat.sensors.HardwareStateTracker
@@ -21,6 +23,7 @@ import com.app.pixelheat.sensors.PassiveLocationSource
 import com.app.pixelheat.sensors.SnapshotCollector
 import com.app.pixelheat.sensors.ThermalZoneReader
 import com.app.pixelheat.sensors.WeatherClient
+import com.app.pixelheat.service.ExportScheduler
 import com.app.pixelheat.service.MonitorController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,5 +74,12 @@ class AppContainer(context: Context) {
 
     val analyzer = CauseEffectAnalyzer(appLabels::labelOf)
     val deviceInfo = DeviceInfoProvider(appContext)
+    val deviceReport = DeviceReportReader(appContext, privilege)
     val monitor = MonitorController(appContext, prefs)
+    val archive = DataArchive(appContext, repository, prefs)
+    val exportScheduler = ExportScheduler(appContext)
+
+    init {
+        if (prefs.autoExport.value) exportScheduler.enqueue()
+    }
 }

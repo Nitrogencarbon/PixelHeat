@@ -2,6 +2,7 @@ package com.app.pixelheat.data
 
 import com.app.pixelheat.data.db.AppUsageEntity
 import com.app.pixelheat.data.db.HardwareEventEntity
+import com.app.pixelheat.data.db.HistoryRollup
 import com.app.pixelheat.model.AppUsage
 import com.app.pixelheat.data.db.LifetimeStatsEntity
 import com.app.pixelheat.data.db.ThermalDao
@@ -58,10 +59,46 @@ class ThermalRepository(private val dao: ThermalDao) {
     fun observeLifetime(installedAt: Long): Flow<LifetimeAverages?> =
         dao.observeLifetime().map { it?.toAverages(installedAt) }
 
-    suspend fun prune(olderThan: Long) {
-        dao.pruneSamples(olderThan)
-        dao.pruneEvents(olderThan)
-        dao.pruneAppUsage(olderThan)
+    /**
+     * Folds measurements older than 30 days into hourly averages. A pass handles a limited number
+     * of hours, so a long backlog drains across watchdog runs instead of one long write.
+     */
+    suspend fun compactHistory(now: Long) {
+        val before = now - HistoryRollup.DETAIL_RETENTION_MS
+        val hours = (
+            dao.busySampleHours(before) + dao.busyUsageHours(before) + dao.busyEventHours(before)
+            )
+            .filter { it < before }
+            .distinct()
+            .sorted()
+            .take(HOURS_PER_PASS)
+        for (hour in hours) {
+            dao.compactHour(hour, minOf(hour + HistoryRollup.HOUR_MS, before))
+        }
+    }
+
+    suspend fun samplesPage(afterId: Long, limit: Int) = dao.samplesPage(afterId, limit)
+
+    suspend fun eventsPage(afterId: Long, limit: Int) = dao.eventsPage(afterId, limit)
+
+    suspend fun appUsagePage(afterId: Long, limit: Int) = dao.appUsagePage(afterId, limit)
+
+    suspend fun lifetime() = dao.lifetime()
+
+    suspend fun sampleCount() = dao.sampleCount()
+
+    suspend fun replaceCollected(
+        samples: List<ThermalSampleEntity>,
+        events: List<HardwareEventEntity>,
+        usage: List<AppUsageEntity>,
+        lifetime: LifetimeStatsEntity?,
+    ) = dao.replaceCollected(samples, events, usage, lifetime)
+
+    suspend fun clearCollected() = dao.replaceCollected(emptyList(), emptyList(), emptyList(), null)
+
+    private companion object {
+        /** One week of hourly buckets. At two passes an hour, a year of backlog clears in about a day. */
+        const val HOURS_PER_PASS = 24 * 7
     }
 }
 
@@ -123,5 +160,6 @@ private fun LifetimeStatsEntity.toAverages(installedAt: Long): LifetimeAverages 
         throttledPct = pct(throttledSec),
         screenOnPct = pct(screenOnSec),
         avgDischargeW = avg(dischargeEnergyWs, dischargeSec),
+        avgInUseTemp = avg(inUseTempSum, inUseSec),
     )
 }

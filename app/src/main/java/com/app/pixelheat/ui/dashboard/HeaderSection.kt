@@ -24,14 +24,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.app.pixelheat.data.db.IN_USE_POWER_W
 import com.app.pixelheat.model.DeviceIdentity
+import com.app.pixelheat.model.DeviceReport
 import com.app.pixelheat.model.LifetimeAverages
-import com.app.pixelheat.model.PhoneTempSource
-import com.app.pixelheat.model.ThermalSnapshot
 import com.app.pixelheat.ui.components.SectionCard
 import com.app.pixelheat.ui.components.StatBlock
-import com.app.pixelheat.ui.theme.BatteryHeat
-import com.app.pixelheat.ui.theme.SkinHeat
 import com.app.pixelheat.ui.theme.temperatureColor
 import com.app.pixelheat.util.fmt
 import com.app.pixelheat.util.formatDate
@@ -41,7 +39,8 @@ import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun DeviceHeroCard(identity: DeviceIdentity, snapshot: ThermalSnapshot?) {
+fun DeviceHeroCard(identity: DeviceIdentity, lifetime: LifetimeAverages?, report: DeviceReport?) {
+    val average = lifetime?.avgPhoneTemp
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
@@ -67,16 +66,26 @@ fun DeviceHeroCard(identity: DeviceIdentity, snapshot: ThermalSnapshot?) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                report?.let {
+                    Text(
+                        it.summaryLine(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            if (snapshot != null) {
-                val temp = snapshot.referenceTemp
-                val scale = if (snapshot.referenceSource == PhoneTempSource.SKIN) SkinHeat else BatteryHeat
-                Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(16.dp))
+            Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    formatTemp(temp),
+                    formatTemp(average),
                     style = MaterialTheme.typography.displaySmallEmphasized,
-                    color = scale.color(temp),
+                    color = average?.let { temperatureColor(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
+                )
+                Text(
+                    "Average",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -106,6 +115,11 @@ fun LifetimeSection(lifetime: LifetimeAverages?) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             StatBlock("Avg phone", formatTemp(lifetime.avgPhoneTemp), accent = temperatureColor(lifetime.avgPhoneTemp))
+            StatBlock(
+                "Avg while in use",
+                formatTemp(lifetime.avgInUseTemp),
+                accent = lifetime.avgInUseTemp?.let { temperatureColor(it) },
+            )
             StatBlock("Avg hottest zone", formatTemp(lifetime.avgMaxTemp))
             StatBlock("Peak", formatTemp(lifetime.peakTemp), accent = temperatureColor(lifetime.peakTemp))
             StatBlock("Avg outside", formatTemp(lifetime.avgAmbient))
@@ -115,6 +129,12 @@ fun LifetimeSection(lifetime: LifetimeAverages?) {
             StatBlock("Time ≥ 40 °C", "${lifetime.hotPct.fmt(1)}%")
             StatBlock("Throttled", "${lifetime.throttledPct.fmt(1)}%")
         }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "While in use means the screen is on, or the phone is charging, drawing at least ${IN_USE_POWER_W.fmt(1)} W, or using GPS, the camera, or audio.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

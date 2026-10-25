@@ -20,11 +20,14 @@ import androidx.compose.material.icons.rounded.DeviceThermostat
 import androidx.compose.material.icons.rounded.Event
 import androidx.compose.material.icons.rounded.Timeline
 import androidx.compose.material.icons.rounded.Wifi
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,7 +41,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -51,6 +58,7 @@ import com.app.pixelheat.model.AmbientEstimate
 import com.app.pixelheat.model.MonitorStatus
 import com.app.pixelheat.model.PrivilegeState
 import com.app.pixelheat.model.ThermalSnapshot
+import com.app.pixelheat.ui.PredictiveBackRegistration
 import com.app.pixelheat.ui.chart.ChartWindow
 import com.app.pixelheat.ui.components.ConnectedSelector
 import com.app.pixelheat.ui.components.HeatProgress
@@ -69,6 +77,7 @@ import com.app.pixelheat.ui.theme.heatScale
 import com.app.pixelheat.util.formatDayTime
 import com.app.pixelheat.util.formatSignedTemp
 import com.app.pixelheat.util.formatTemp
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class, ExperimentalLayoutApi::class)
@@ -80,6 +89,7 @@ fun SensorDetailScreen(
     privilege: PrivilegeState,
     onBack: () -> Unit,
 ) {
+    PredictiveBackRegistration()
     val metric = viewModel.metric
     val window by viewModel.window.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()
@@ -167,7 +177,12 @@ fun SensorDetailScreen(
                     }
                 }
             }
-            if (metric == Metric.AMBIENT) item("calibration") { AmbientCalibrationCard(snapshot?.ambient, viewModel::reportAmbientError) }
+            if (metric == Metric.AMBIENT) {
+                item("calibration") {
+                    val bias by viewModel.ambientBias.collectAsStateWithLifecycle()
+                    AmbientCalibrationCard(snapshot?.ambient, bias, viewModel::setAmbientBias)
+                }
+            }
             if (metric.eventTypes.isNotEmpty()) item("events") { EventsCard(events) }
             item("about") {
                 SectionCard(title = "About this sensor", icon = Icons.AutoMirrored.Rounded.HelpOutline) {
@@ -209,33 +224,67 @@ private fun HeroCard(metric: Metric, tile: TileModel?) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun AmbientCalibrationCard(estimate: AmbientEstimate?, onReport: (Float) -> Unit) {
+private fun AmbientCalibrationCard(estimate: AmbientEstimate?, bias: Float, onConfirm: (Float) -> Unit) {
+    val active = bias.coerceIn(BIAS_MIN, BIAS_MAX)
+    var draft by remember { mutableFloatStateOf(active) }
+    LaunchedEffect(active) { draft = active }
+    val changed = abs(draft - active) >= 0.05f
     SectionCard(title = "Real-temperature check", icon = Icons.Rounded.DeviceThermostat) {
         Text(
-            "Correction ${formatSignedTemp(estimate?.biasC ?: 0f)}. " +
-                "A negative correction means the phone was reading warmer than the real air. " +
-                "The uncorrected fusion stays visible above, so each new difference is measured against the number you see.",
+            "Active correction ${formatSignedTemp(active)}. " +
+                "A negative correction means the phone was reading warmer than the real air.",
             style = MaterialTheme.typography.bodyMedium,
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
-            "If the estimate is still off, say by how much.",
+            "Choose the correction with + and −. It starts working when you confirm.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(12.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(2f, 1f).forEach { degrees ->
-                FilledTonalButton(onClick = { onReport(degrees) }) { Text("${degrees.toInt()}° too high") }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            FilledTonalIconButton(
+                onClick = { draft = (draft - 1f).coerceIn(BIAS_MIN, BIAS_MAX) },
+                enabled = draft > BIAS_MIN,
+            ) {
+                Icon(Icons.Rounded.Remove, contentDescription = "Lower the correction by 1 degree")
             }
-            listOf(1f, 2f).forEach { degrees ->
-                FilledTonalButton(onClick = { onReport(-degrees) }) { Text("${degrees.toInt()}° too low") }
+            Text(
+                formatSignedTemp(draft),
+                style = MaterialTheme.typography.headlineSmallEmphasized,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+            FilledTonalIconButton(
+                onClick = { draft = (draft + 1f).coerceIn(BIAS_MIN, BIAS_MAX) },
+                enabled = draft < BIAS_MAX,
+            ) {
+                Icon(Icons.Rounded.Add, contentDescription = "Raise the correction by 1 degree")
             }
         }
+        estimate?.celsius?.let { shown ->
+            if (changed) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "After confirm, the estimate reads ${formatTemp(shown - active + draft)}.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = { onConfirm(draft) },
+            enabled = changed,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Confirm") }
     }
 }
+
+private const val BIAS_MIN = -20f
+private const val BIAS_MAX = 20f
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

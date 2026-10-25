@@ -19,6 +19,97 @@ class AppPreferences(context: Context) {
         _monitoringEnabled.value = enabled
     }
 
+    /** Daily copy of the measurements into Downloads. Off until the user turns it on. */
+    private val _autoExport = MutableStateFlow(sp.getBoolean(K_AUTO_EXPORT, false))
+    val autoExport: StateFlow<Boolean> = _autoExport.asStateFlow()
+
+    fun setAutoExport(enabled: Boolean) {
+        sp.edit { putBoolean(K_AUTO_EXPORT, enabled) }
+        _autoExport.value = enabled
+    }
+
+    private val _lastExportAt = MutableStateFlow(sp.getLong(K_LAST_EXPORT, 0L))
+    val lastExportAt: StateFlow<Long> = _lastExportAt.asStateFlow()
+
+    fun markExported(at: Long) {
+        sp.edit { putLong(K_LAST_EXPORT, at) }
+        _lastExportAt.value = at
+    }
+
+    fun collectedEstimate() = CollectedEstimate(
+        idleBaselineTemp = idleBaselineTemp,
+        idleBaselineAt = idleBaselineAt,
+        fusionX = fusionX,
+        fusionP = fusionP,
+        fusionAt = fusionAt,
+        fusionRth = fusionRth,
+        fusionSelfHeat = fusionSelfHeat,
+        ambientBiasC = ambientBiasC,
+        weatherTemp = weatherTemp,
+        weatherAt = weatherAt,
+        // Backups land in public Downloads: the location the weather was fetched for stays on the phone.
+        weatherLat = Float.NaN,
+        weatherLon = Float.NaN,
+        weatherShortwave = weatherShortwave,
+        weatherWindMs = weatherWindMs,
+        weatherIsDay = weatherIsDay,
+    )
+
+    /**
+     * Held by the ambient estimator for a whole read-update-write cycle and by restore and clear, so a
+     * restored or cleared estimate is not overwritten by a sample that read the old values.
+     */
+    val estimateLock = Any()
+
+    fun restoreCollectedEstimate(state: CollectedEstimate) = synchronized(estimateLock) {
+        idleBaselineTemp = state.idleBaselineTemp
+        idleBaselineAt = state.idleBaselineAt
+        fusionX = state.fusionX
+        fusionP = state.fusionP
+        fusionAt = state.fusionAt
+        fusionRth = state.fusionRth
+        fusionSelfHeat = state.fusionSelfHeat
+        ambientBiasC = state.ambientBiasC
+        saveWeather(
+            tempC = state.weatherTemp,
+            lat = state.weatherLat.toDouble(),
+            lon = state.weatherLon.toDouble(),
+            at = state.weatherAt,
+            shortwaveWm2 = state.weatherShortwave,
+            windMs = state.weatherWindMs,
+            isDay = state.weatherIsDay,
+        )
+    }
+
+    /** Drops measurements kept outside the database. Settings, consent and permissions stay. */
+    fun clearCollectedEstimate() = synchronized(estimateLock) {
+        sp.edit {
+            listOf(
+                K_BASELINE_T, K_BASELINE_AT,
+                K_FUSION_X, K_FUSION_P, K_FUSION_AT, K_FUSION_RTH, K_FUSION_SELF,
+                K_WEATHER_T, K_WEATHER_AT, K_WEATHER_LAT, K_WEATHER_LON, K_WEATHER_SW, K_WEATHER_WIND, K_WEATHER_DAY,
+            ).forEach(::remove)
+            putFloat(K_AMBIENT_BIAS, -5f)
+        }
+    }
+
+    /** Whether the user allowed sending their approximate location to Open-Meteo. Off until granted. */
+    private val _weatherConsent = MutableStateFlow(sp.getBoolean(K_WEATHER_CONSENT, false))
+    val weatherConsent: StateFlow<Boolean> = _weatherConsent.asStateFlow()
+
+    /** Revoking also drops the stored weather and the coordinates it was fetched for. */
+    @Synchronized
+    fun setWeatherConsent(granted: Boolean) {
+        sp.edit {
+            putBoolean(K_WEATHER_CONSENT, granted)
+            if (!granted) {
+                listOf(K_WEATHER_T, K_WEATHER_AT, K_WEATHER_LAT, K_WEATHER_LON, K_WEATHER_SW, K_WEATHER_WIND, K_WEATHER_DAY)
+                    .forEach(::remove)
+            }
+        }
+        _weatherConsent.value = granted
+    }
+
     private val _appearance = MutableStateFlow(readAppearance())
     val appearance: StateFlow<Appearance> = _appearance.asStateFlow()
 
@@ -26,8 +117,6 @@ class AppPreferences(context: Context) {
         val next = transform(_appearance.value)
         sp.edit {
             putString(K_THEME_MODE, next.themeMode.name)
-            putBoolean(K_DYNAMIC_COLOR, next.dynamicColor)
-            putInt(K_SEED, next.seedArgb)
             putBoolean(K_PURE_BLACK, next.pureBlack)
         }
         _appearance.value = next
@@ -36,8 +125,6 @@ class AppPreferences(context: Context) {
     private fun readAppearance() = Appearance(
         themeMode = sp.getString(K_THEME_MODE, null)
             ?.let { name -> ThemeMode.entries.firstOrNull { it.name == name } } ?: ThemeMode.SYSTEM,
-        dynamicColor = sp.getBoolean(K_DYNAMIC_COLOR, true),
-        seedArgb = sp.getInt(K_SEED, Appearance.DEFAULT_SEED),
         pureBlack = sp.getBoolean(K_PURE_BLACK, false),
     )
 
@@ -45,9 +132,10 @@ class AppPreferences(context: Context) {
         get() = sp.getBoolean(K_ROOT, false)
         set(value) = sp.edit { putBoolean(K_ROOT, value) }
 
-    var onboardingDone: Boolean
-        get() = sp.getBoolean(K_ONBOARDING, false)
-        set(value) = sp.edit { putBoolean(K_ONBOARDING, value) }
+    /** False until the first-run permission cards have been completed. */
+    var accessIntroDone: Boolean
+        get() = sp.getBoolean(K_ACCESS_INTRO, false)
+        set(value) = sp.edit { putBoolean(K_ACCESS_INTRO, value) }
 
     var lastAlertAt: Long
         get() = sp.getLong(K_LAST_ALERT, 0L)
@@ -61,6 +149,11 @@ class AppPreferences(context: Context) {
         get() = sp.getLong(K_BASELINE_AT, 0L)
         set(value) = sp.edit { putLong(K_BASELINE_AT, value) }
 
+    /**
+     * Ignored without Open-Meteo consent. That covers a fetch still in flight when the user revokes
+     * it and a backup restored while it is off. Locked with [setWeatherConsent] so the two cannot interleave.
+     */
+    @Synchronized
     fun saveWeather(
         tempC: Float,
         lat: Double,
@@ -69,7 +162,9 @@ class AppPreferences(context: Context) {
         shortwaveWm2: Float = Float.NaN,
         windMs: Float = Float.NaN,
         isDay: Boolean? = null,
-    ) = sp.edit {
+    ) {
+        if (!_weatherConsent.value) return
+        sp.edit {
         putFloat(K_WEATHER_T, tempC)
         putFloat(K_WEATHER_LAT, lat.toFloat())
         putFloat(K_WEATHER_LON, lon.toFloat())
@@ -77,6 +172,7 @@ class AppPreferences(context: Context) {
         putFloat(K_WEATHER_SW, shortwaveWm2)
         putFloat(K_WEATHER_WIND, windMs)
         if (isDay != null) putBoolean(K_WEATHER_DAY, isDay) else remove(K_WEATHER_DAY)
+        }
     }
 
     val weatherTemp: Float get() = sp.getFloat(K_WEATHER_T, Float.NaN)
@@ -118,7 +214,7 @@ class AppPreferences(context: Context) {
     private companion object {
         const val K_MONITORING = "monitoring_enabled"
         const val K_ROOT = "root_granted"
-        const val K_ONBOARDING = "onboarding_done"
+        const val K_ACCESS_INTRO = "setup_cards_done"
         const val K_LAST_ALERT = "last_alert_at"
         const val K_BASELINE_T = "idle_baseline_temp"
         const val K_BASELINE_AT = "idle_baseline_at"
@@ -129,6 +225,7 @@ class AppPreferences(context: Context) {
         const val K_WEATHER_SW = "weather_shortwave"
         const val K_WEATHER_WIND = "weather_wind"
         const val K_WEATHER_DAY = "weather_is_day"
+        const val K_WEATHER_CONSENT = "weather_consent"
         const val K_FUSION_X = "fusion_x"
         const val K_FUSION_P = "fusion_p"
         const val K_FUSION_AT = "fusion_at"
@@ -136,9 +233,28 @@ class AppPreferences(context: Context) {
         const val K_FUSION_SELF = "fusion_self"
         const val K_AMBIENT_BIAS = "ambient_bias_c"
         const val K_THEME_MODE = "theme_mode"
-        const val K_DYNAMIC_COLOR = "dynamic_color"
-        const val K_SEED = "seed_color"
         const val K_PURE_BLACK = "pure_black"
         const val K_CHART_SERIES = "chart_series"
+        const val K_AUTO_EXPORT = "auto_export"
+        const val K_LAST_EXPORT = "last_export_at"
     }
 }
+
+/** Readings kept in preferences rather than the database: the outside-temperature estimate and its weather cache. */
+data class CollectedEstimate(
+    val idleBaselineTemp: Float,
+    val idleBaselineAt: Long,
+    val fusionX: Float,
+    val fusionP: Float,
+    val fusionAt: Long,
+    val fusionRth: Float,
+    val fusionSelfHeat: Float,
+    val ambientBiasC: Float,
+    val weatherTemp: Float,
+    val weatherAt: Long,
+    val weatherLat: Float,
+    val weatherLon: Float,
+    val weatherShortwave: Float,
+    val weatherWindMs: Float,
+    val weatherIsDay: Boolean?,
+)

@@ -32,6 +32,13 @@ import kotlin.math.roundToInt
  */
 class CauseEffectAnalyzer(private val labelOf: (String) -> String = ::defaultLabel) {
 
+    fun appHeat(
+        samples: List<ThermalSampleEntity>,
+        apps: List<AppUsageEntity>,
+        from: Long,
+        to: Long,
+    ): AppHeatRanking = AppHeatRanker.rank(samples, apps, from, to, labelOf)
+
     fun analyze(
         samples: List<ThermalSampleEntity>,
         events: List<HardwareEventEntity>,

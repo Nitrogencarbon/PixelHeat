@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.lazy.grid.LazyGridItemScope
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -24,6 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,6 +72,22 @@ fun SectionCard(
     }
 }
 
+/**
+ * Modifier for lazy-grid items: placement follows the motion scheme's spatial spec, fades its
+ * effects spec (reordering, appearing and disappearing items animate instead of jumping).
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Suppress("ModifierFactoryExtensionFunction") // needs the grid item scope as receiver for animateItem
+@Composable
+fun LazyGridItemScope.motionItem(): Modifier {
+    val motion = MaterialTheme.motionScheme
+    return Modifier.animateItem(
+        fadeInSpec = motion.defaultEffectsSpec(),
+        placementSpec = motion.defaultSpatialSpec(),
+        fadeOutSpec = motion.defaultEffectsSpec(),
+    )
+}
+
 /** Icon on a tonal Material shape tinted with a data color; used for tiles and list leading content. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -90,13 +110,29 @@ fun ShapeIcon(
     }
 }
 
-/** Determinate M3 progress bar with the stop indicator, colored by data semantics. */
+/**
+ * Determinate M3 progress bar with the stop indicator, colored by data semantics.
+ * Both the fill and the color follow the motion scheme's effects spec: they are bounded values,
+ * so no overshoot (a spatial spring would push the bar past 100%).
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun HeatProgress(fraction: Float, color: Color, modifier: Modifier = Modifier) {
+    val motion = MaterialTheme.motionScheme
+    val animatedFraction = animateFloatAsState(
+        targetValue = fraction.coerceIn(0f, 1f),
+        animationSpec = motion.defaultEffectsSpec(),
+        label = "heatProgress",
+    )
+    val animatedColor by animateColorAsState(
+        targetValue = color,
+        animationSpec = motion.defaultEffectsSpec(),
+        label = "heatProgressColor",
+    )
     LinearProgressIndicator(
-        progress = { fraction.coerceIn(0f, 1f) },
+        progress = { animatedFraction.value.coerceIn(0f, 1f) },
         modifier = modifier.fillMaxWidth(),
-        color = color,
+        color = animatedColor,
         trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         strokeCap = StrokeCap.Round,
     )

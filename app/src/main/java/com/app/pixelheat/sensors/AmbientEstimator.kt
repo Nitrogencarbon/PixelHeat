@@ -23,8 +23,20 @@ class AmbientEstimator(private val prefs: AppPreferences) {
     private var refAt = 0L
     private var idleSlope = Float.POSITIVE_INFINITY
 
-    @Synchronized
     fun estimate(
+        battery: BatteryInfo,
+        screenOn: Boolean,
+        env: EnvironmentReading?,
+        weather: WeatherSnapshot?,
+        skinC: Float?,
+        cpuC: Float?,
+        gpsActive: Boolean,
+        now: Long,
+    ): AmbientEstimate = synchronized(prefs.estimateLock) {
+        estimateLocked(battery, screenOn, env, weather, skinC, cpuC, gpsActive, now)
+    }
+
+    private fun estimateLocked(
         battery: BatteryInfo,
         screenOn: Boolean,
         env: EnvironmentReading?,

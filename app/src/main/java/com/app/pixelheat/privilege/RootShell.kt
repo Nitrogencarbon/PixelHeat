@@ -9,6 +9,7 @@ import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
@@ -24,12 +25,22 @@ class RootShell : PrivilegedShell {
     private var reader: BufferedReader? = null
 
     suspend fun open(): Boolean = mutex.withLock {
-        withContext(Dispatchers.IO) { ensureStarted() }
+        withContext(Dispatchers.IO) { ensureStarted().also { if (it) lost = false } }
     }
+
+    /** Set when the shell could not be restarted after being granted, e.g. root was revoked. */
+    @Volatile
+    var lost = false
+        private set
 
     override suspend fun exec(command: String, timeoutMs: Long): String? = mutex.withLock {
         withContext(Dispatchers.IO) {
-            if (!ensureStarted()) null else execute(command, timeoutMs)
+            if (!ensureStarted()) {
+                lost = true
+                null
+            } else {
+                execute(command, timeoutMs)
+            }
         }
     }
 
@@ -57,36 +68,41 @@ class RootShell : PrivilegedShell {
         val w = writer ?: return null
         val r = reader ?: return null
         val marker = "__PH_END_${System.nanoTime()}__"
+        // Whoever flips this first owns the outcome: a late watchdog must not kill the next command.
+        val settled = AtomicBoolean(false)
         val watchdog = thread(isDaemon = true, name = "root-shell-watchdog") {
             try {
                 Thread.sleep(timeoutMs)
-                p.destroy()
+                if (settled.compareAndSet(false, true)) p.destroy()
             } catch (_: InterruptedException) {
             }
         }
-        return try {
+        val out = try {
             w.write("$command 2>/dev/null\necho $marker\n")
             w.flush()
-            val out = StringBuilder()
-            while (true) {
-                val line = r.readLine()
-                if (line == null) {
-                    close()
-                    return null
-                }
-                if (line.endsWith(marker)) {
-                    val tail = line.removeSuffix(marker)
-                    if (tail.isNotEmpty()) out.appendLine(tail)
-                    break
-                }
-                out.appendLine(line)
-            }
-            out.toString()
+            readUntil(r, marker)
         } catch (_: IOException) {
-            close()
             null
-        } finally {
-            watchdog.interrupt()
+        }
+        val timedOut = !settled.compareAndSet(false, true)
+        watchdog.interrupt()
+        if (out == null || timedOut) {
+            close()
+            return null
+        }
+        return out
+    }
+
+    private fun readUntil(r: BufferedReader, marker: String): String? {
+        val out = StringBuilder()
+        while (true) {
+            val line = r.readLine() ?: return null
+            if (line.endsWith(marker)) {
+                val tail = line.removeSuffix(marker)
+                if (tail.isNotEmpty()) out.appendLine(tail)
+                return out.toString()
+            }
+            out.appendLine(line)
         }
     }
 

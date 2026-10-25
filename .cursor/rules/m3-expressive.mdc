@@ -1,0 +1,11 @@
+---
+description: Material Design 3 / M3 Expressive spec, tokens, component dp, motion springs
+globs: ["**/*.kt", "**/*.xml"]
+alwaysApply: false
+---
+
+Read `.agent-skills/m3-expressive/SKILL.md` before writing any Material Design UI, then follow
+its "Where to look" table into the specific reference file. Never state a dp value, token name,
+or spring parameter from memory. Look it up. Label anything not in M3 as a design decision.
+This app uses Jetpack Compose with androidx.compose.material3 (1.5.0-beta01, Expressive APIs)
+and MaterialKolor for dynamic color: use the Compose side of the skill.

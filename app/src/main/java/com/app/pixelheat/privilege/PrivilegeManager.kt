@@ -40,7 +40,8 @@ class PrivilegeManager(
         Shizuku.addBinderDeadListener(binderDead)
         Shizuku.addRequestPermissionResultListener(permissionResult)
         scope.launch { shizukuShell.connected.collect { refresh() } }
-        if (prefs.rootGranted && rootStatus == RootStatus.AVAILABLE) {
+        // During the permission cards, root waits for its own card. Reconnect on later launches.
+        if (prefs.rootGranted && prefs.accessIntroDone && rootStatus == RootStatus.AVAILABLE) {
             scope.launch { requestRoot() }
         }
         refresh()
@@ -71,10 +72,17 @@ class PrivilegeManager(
     }
 
     /** Root is preferred: the persistent `su` session is cheaper than a binder round-trip per command. */
-    fun activeShell(): PrivilegedShell? = when {
-        rootStatus == RootStatus.GRANTED -> rootShell
-        shizukuShell.isConnected -> shizukuShell
-        else -> null
+    fun activeShell(): PrivilegedShell? {
+        if (rootStatus == RootStatus.GRANTED && rootShell.lost) {
+            rootStatus = if (RootShell.isSuAvailable()) RootStatus.DENIED else RootStatus.UNAVAILABLE
+            prefs.rootGranted = false
+            refresh()
+        }
+        if (rootStatus == RootStatus.GRANTED) return rootShell
+        if (shizukuShell.isConnected) return shizukuShell
+        // The user service can die on its own; rebind while the permission is still there.
+        if (shizukuStatus() == ShizukuStatus.GRANTED) shizukuShell.bind()
+        return null
     }
 
     private fun onShizukuChanged() {

@@ -120,9 +120,16 @@ class SensorDetailViewModel(
         _window.value = window
     }
 
-    /** [errorC] is how many degrees the current estimate is above the real temperature. */
-    fun reportAmbientError(errorC: Float) {
-        c.prefs.ambientBiasC = (c.prefs.ambientBiasC - errorC).coerceIn(-20f, 20f)
+    private val _ambientBias = MutableStateFlow(c.prefs.ambientBiasC)
+
+    /** The stored correction. The live estimate reports 0 until it has a reading, so it is not the source. */
+    val ambientBias: StateFlow<Float> = _ambientBias.asStateFlow()
+
+    /** Replaces the outside-temperature correction. The estimate uses it from the next sample. */
+    fun setAmbientBias(biasC: Float) {
+        val value = biasC.coerceIn(-20f, 20f)
+        c.prefs.ambientBiasC = value
+        _ambientBias.value = value
     }
 
     private fun build(samples: List<ThermalSampleEntity>, start: Long, end: Long): HistoryData {

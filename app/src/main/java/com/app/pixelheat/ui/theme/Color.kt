@@ -5,19 +5,8 @@ import com.app.pixelheat.model.HardwareEventType
 import com.app.pixelheat.model.ThermalStatus
 import com.app.pixelheat.model.ZoneCategory
 
-/** Seed colors offered in Settings when wallpaper colors are off. */
-data class SeedColor(val name: String, val argb: Int)
-
-val SeedColors = listOf(
-    SeedColor("Ember", 0xFFFF6E40.toInt()),
-    SeedColor("Amber", 0xFFFFB300.toInt()),
-    SeedColor("Lime", 0xFF7CB342.toInt()),
-    SeedColor("Teal", 0xFF00897B.toInt()),
-    SeedColor("Sky", 0xFF039BE5.toInt()),
-    SeedColor("Indigo", 0xFF3F51B5.toInt()),
-    SeedColor("Violet", 0xFF8E24AA.toInt()),
-    SeedColor("Rose", 0xFFE91E63.toInt()),
-)
+/** Seed of the app's only color scheme. */
+val BrandGreen = Color(0xFF7CB342)
 
 // Data semantics: these stay fixed regardless of the color scheme so that cold → hot reads the same everywhere.
 val Ember = Color(0xFFFF6E40)
