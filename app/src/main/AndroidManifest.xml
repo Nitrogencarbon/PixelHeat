@@ -78,6 +78,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- Higher initOrder runs first, so Sui's hidden-API lookup is skipped. See ShizukuStartupProvider. -->
+        <provider
+            android:name=".privilege.ShizukuStartupProvider"
+            android:authorities="${applicationId}.startup"
+            android:exported="false"
+            android:initOrder="100" />
+
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
